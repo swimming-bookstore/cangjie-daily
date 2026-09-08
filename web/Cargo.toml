@@ -1,0 +1,18 @@
+[package]
+name = "cangjie-daily-web"
+version = "0.1.0"
+edition = "2021"
+description = "倉頡日課 in the browser — Leptos CSR + Tailwind"
+
+[dependencies]
+cj-core = { path = "../cj-core" }
+console_error_panic_hook = "0.1"
+js-sys = "0.3"
+leptos = { version = "0.8", features = ["csr"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = [
+  "Window",
+  "KeyboardEvent",
+  "Response",
+] }

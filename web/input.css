@@ -1,0 +1,24 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply bg-white text-black antialiased;
+  }
+  body {
+    @apply min-h-screen font-sans;
+  }
+}
+
+@keyframes row-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-5px); }
+  40% { transform: translateX(5px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(4px); }
+}
+
+.row-bad {
+  animation: row-shake 0.4s ease;
+}

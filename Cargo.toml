@@ -1,0 +1,14 @@
+[workspace]
+members = ["cj-core", "web"]
+default-members = [".", "cj-core"]
+resolver = "2"
+
+[package]
+name = "cjpack"
+version = "0.1.0"
+edition = "2021"
+description = "Pack Rime Cangjie tables into JSON for 倉頡日課"
+
+[[bin]]
+name = "cjpack"
+path = "src/main.rs"

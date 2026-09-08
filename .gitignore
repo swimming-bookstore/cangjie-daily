@@ -1,0 +1,5 @@
+/target
+/web/dist
+/web/style.css
+**/*.rs.bk
+.DS_Store

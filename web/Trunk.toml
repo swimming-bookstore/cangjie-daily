@@ -1,0 +1,11 @@
+[build]
+target = "index.html"
+dist = "dist"
+
+[watch]
+watch = ["src", "../cj-core", "input.css", "index.html"]
+
+[[hooks]]
+stage = "pre_build"
+command = "npx"
+command_arguments = ["--yes", "tailwindcss@3.4.17", "-i", "input.css", "-o", "style.css", "--minify"]
