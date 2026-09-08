@@ -304,9 +304,19 @@ fn Game(table: Table) -> impl IntoView {
             return;
         }
         if let Some(el) = type_box.get() {
-            let _ = el.focus();
+            let window = web_sys::window();
+            let (sx, sy) = window
+                .as_ref()
+                .map(|w| (w.scroll_x().unwrap_or(0.0), w.scroll_y().unwrap_or(0.0)))
+                .unwrap_or((0.0, 0.0));
+            let opts = web_sys::FocusOptions::new();
+            opts.set_prevent_scroll(true);
+            let _ = el.focus_with_options(&opts);
             el.set_value(" ");
             let _ = el.set_selection_range(1, 1);
+            if let Some(w) = window {
+                let _ = w.scroll_to_with_x_and_y(sx, sy);
+            }
         }
     };
 
