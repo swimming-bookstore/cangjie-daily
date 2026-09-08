@@ -3,6 +3,7 @@ use cj_core::{
     Table, SESSION_N,
 };
 use leptos::ev;
+use leptos::html;
 use leptos::prelude::*;
 use std::collections::HashSet;
 use std::time::Duration;
@@ -105,7 +106,7 @@ fn App() -> impl IntoView {
     let table = LocalResource::new(|| async { load_table().await });
 
     view! {
-        <div class="min-h-screen bg-white px-4 py-6 text-black">
+        <div class="min-h-screen bg-white px-3 py-4 text-black sm:px-4 sm:py-6">
             <Suspense fallback=move || {
                 view! {
                     <p class="mx-auto max-w-md p-8 text-center text-neutral-500">
@@ -293,6 +294,22 @@ fn Game(table: Table) -> impl IntoView {
         }
     };
 
+    let type_box = NodeRef::<html::Input>::new();
+
+    let keep_kb = move || {
+        if screen.get() != Screen::Play {
+            if let Some(el) = type_box.get() {
+                let _ = el.blur();
+            }
+            return;
+        }
+        if let Some(el) = type_box.get() {
+            let _ = el.focus();
+            el.set_value(" ");
+            let _ = el.set_selection_range(1, 1);
+        }
+    };
+
     let push_char = move |ch: char| {
         if screen.get() != Screen::Play {
             return;
@@ -323,10 +340,50 @@ fn Game(table: Table) -> impl IntoView {
         }
     };
 
-    let handle = window_event_listener(ev::keydown, move |ev: web_sys::KeyboardEvent| {
+    let erase = move || {
+        if screen.get() != Screen::Play {
+            return;
+        }
+        let i = card_n.get();
+        if done.with(|d| d.get(i).copied().unwrap_or(true)) {
+            return;
+        }
+        let caret = carets.with(|c| c.get(i).copied().unwrap_or(0));
+        let mut step_back = false;
+        buffers.update(|b| {
+            if let Some(row) = b.get_mut(i) {
+                if row.get(caret).map(|s| !s.is_empty()).unwrap_or(false) {
+                    if let Some(cell) = row.get_mut(caret) {
+                        cell.clear();
+                    }
+                } else if caret > 0 {
+                    if let Some(cell) = row.get_mut(caret - 1) {
+                        cell.clear();
+                    }
+                    step_back = true;
+                }
+            }
+        });
+        if step_back {
+            carets.update(|c| {
+                if let Some(cur) = c.get_mut(i) {
+                    *cur = caret - 1;
+                }
+            });
+        }
+    };
+
+    let on_key = move |ev: web_sys::KeyboardEvent, from_box: bool| {
         let key = ev.key();
-        let typing = screen.get() == Screen::Play && key.chars().count() == 1;
-        if key == "Backspace" || key == " " || typing {
+        let special = key == "Backspace"
+            || key == " "
+            || key == "Enter"
+            || key == "Escape"
+            || key == "ArrowLeft"
+            || key == "ArrowRight";
+        // Do not preventDefault letters in the hidden input: iOS often skips
+        // keydown and only fires `input`. Desktop letters go through `input`.
+        if special || (!from_box && key.chars().count() == 1) {
             ev.prevent_default();
         }
         let key = key.as_str();
@@ -346,6 +403,7 @@ fn Game(table: Table) -> impl IntoView {
                     screen.set(Screen::Pause);
                 } else if key == "Enter" || key == " " {
                     check_answer(card_n.get());
+                    set_timeout(move || keep_kb(), Duration::from_millis(10));
                 } else if key == "ArrowLeft" {
                     let i = card_n.get();
                     carets.update(|c| {
@@ -361,31 +419,8 @@ fn Game(table: Table) -> impl IntoView {
                         }
                     });
                 } else if key == "Backspace" {
-                    let i = card_n.get();
-                    let caret = carets.with(|c| c.get(i).copied().unwrap_or(0));
-                    let mut step_back = false;
-                    buffers.update(|b| {
-                        if let Some(row) = b.get_mut(i) {
-                            if row.get(caret).map(|s| !s.is_empty()).unwrap_or(false) {
-                                if let Some(cell) = row.get_mut(caret) {
-                                    cell.clear();
-                                }
-                            } else if caret > 0 {
-                                if let Some(cell) = row.get_mut(caret - 1) {
-                                    cell.clear();
-                                }
-                                step_back = true;
-                            }
-                        }
-                    });
-                    if step_back {
-                        carets.update(|c| {
-                            if let Some(cur) = c.get_mut(i) {
-                                *cur = caret - 1;
-                            }
-                        });
-                    }
-                } else if key.chars().count() == 1 {
+                    erase();
+                } else if !from_box && key.chars().count() == 1 {
                     if let Some(ch) = key.chars().next() {
                         if !ch.is_control() {
                             push_char(ch);
@@ -394,12 +429,63 @@ fn Game(table: Table) -> impl IntoView {
                 }
             }
         }
+    };
+
+    let handle = window_event_listener(ev::keydown, move |ev: web_sys::KeyboardEvent| {
+        if ev
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
+            .is_some()
+        {
+            return;
+        }
+        on_key(ev, false);
     });
     on_cleanup(move || handle.remove());
 
+    Effect::new(move |_| {
+        let _ = (card_n.get(), screen.get());
+        keep_kb();
+    });
+
     view! {
-        <section class="relative mx-auto max-w-2xl">
-            <div class="mx-auto w-fit">
+        <section class="relative mx-auto max-w-2xl overflow-x-hidden" on:click=move |_| keep_kb()>
+            <input
+                node_ref=type_box
+                class="cj-type"
+                type="text"
+                inputmode="text"
+                lang="en"
+                autocomplete="off"
+                autocapitalize="none"
+                spellcheck="false"
+                enterkeyhint="done"
+                aria-label="Cangjie code"
+                on:blur=move |_| {
+                    if screen.get() == Screen::Play {
+                        set_timeout(move || keep_kb(), Duration::from_millis(0));
+                    }
+                }
+                on:keydown=move |ev| on_key(ev, true)
+                on:input=move |_| {
+                    let Some(el) = type_box.get() else {
+                        return;
+                    };
+                    let v = el.value();
+                    if v.is_empty() {
+                        erase();
+                    } else {
+                        for ch in v.chars() {
+                            if ch.is_ascii_alphabetic() {
+                                push_char(ch);
+                            }
+                        }
+                    }
+                    el.set_value(" ");
+                    let _ = el.set_selection_range(1, 1);
+                }
+            />
+            <div class="mx-auto w-full max-w-full sm:w-fit">
             <PlayList
                 screen=screen
                 card_n=card_n
@@ -411,13 +497,23 @@ fn Game(table: Table) -> impl IntoView {
                 carets=carets
                 flash=flash
                 list_offset=list_offset
-                on_check=Callback::new(move |i: usize| check_answer(i))
-                on_hint=Callback::new(move |i: usize| toggle_hint(i))
-                on_focus=Callback::new(move |(i, slot): (usize, Option<usize>)| focus_row(i, slot))
+                on_check=Callback::new(move |i: usize| {
+                    check_answer(i);
+                    keep_kb();
+                })
+                on_hint=Callback::new(move |i: usize| {
+                    toggle_hint(i);
+                    keep_kb();
+                })
+                on_focus=Callback::new(move |(i, slot): (usize, Option<usize>)| {
+                    focus_row(i, slot);
+                    keep_kb();
+                })
             />
             <div class="mt-6 flex justify-center">
                 <button
                     class="border border-black bg-black px-6 py-2 text-white"
+                    on:pointerdown=move |ev| ev.prevent_default()
                     on:click=move |_| more_ten()
                 >
                     "10 more"
@@ -462,19 +558,19 @@ fn PlayList(
                                 <div
                                     class=move || {
                                         match flash.with(|f| f.get(i).copied().flatten()) {
-                                            Some(Flash::Bad) => "flex items-center gap-2 row-bad",
-                                            _ => "flex items-center gap-2",
+                                            Some(Flash::Bad) => "cj-row row-bad",
+                                            _ => "cj-row",
                                         }
                                     }
                                     on:click=move |_| on_focus.run((i, None))
                                 >
-                                    <span class="w-8 shrink-0 text-center text-sm text-neutral-500">
+                                    <span class="w-6 shrink-0 text-center text-sm text-neutral-500 sm:w-8">
                                         {move || list_offset.get() + i + 1}
                                     </span>
-                                    <span class="w-12 shrink-0 text-center font-serif text-3xl">
+                                    <span class="w-10 shrink-0 text-center font-serif text-3xl sm:w-12">
                                         {han}
                                     </span>
-                                    <div class="flex w-[13.5rem] shrink-0 gap-1.5">
+                                    <div class="cj-boxes">
                                         {(0..5)
                                             .map(|s| {
                                                 let code = code.clone();
@@ -496,12 +592,14 @@ fn PlayList(
                                             })
                                             .collect_view()}
                                     </div>
+                                    <div class="cj-acts">
                                     <Show when=move || {
                                         screen.get() != Screen::Over
                                             && !done.with(|d| d.get(i).copied().unwrap_or(false))
                                     }>
                                         <button
                                             class="h-8 w-16 shrink-0 border border-black bg-black text-sm text-white"
+                                            on:pointerdown=move |ev| ev.prevent_default()
                                             on:click=move |ev| {
                                                 ev.stop_propagation();
                                                 on_check.run(i);
@@ -517,6 +615,7 @@ fn PlayList(
                                                     "h-8 w-14 shrink-0 border border-neutral-400 text-sm text-neutral-500"
                                                 }
                                             }
+                                            on:pointerdown=move |ev| ev.prevent_default()
                                             on:click=move |ev| {
                                                 ev.stop_propagation();
                                                 on_hint.run(i);
@@ -525,20 +624,6 @@ fn PlayList(
                                             "Hint"
                                         </button>
                                     </Show>
-                                    <span class="min-w-0 font-serif text-lg leading-8 text-neutral-600">
-                                        {
-                                            let code = code.clone();
-                                            move || {
-                                                let show = screen.get() == Screen::Over
-                                                    || hint_on.with(|h| h.get(i).copied().unwrap_or(false));
-                                                if show {
-                                                    radicals.with_value(|r| format_code(&code, r))
-                                                } else {
-                                                    String::new()
-                                                }
-                                            }
-                                        }
-                                    </span>
                                     <span class=move || {
                                         let f = flash.with(|fl| fl.get(i).copied().flatten());
                                         if f == Some(Flash::Ok)
@@ -564,6 +649,21 @@ fn PlayList(
                                             }
                                         }}
                                     </span>
+                                    <span class="cj-hint-line min-w-0 font-serif text-lg leading-8 text-neutral-600 empty:hidden">
+                                        {
+                                            let code = code.clone();
+                                            move || {
+                                                let show = screen.get() == Screen::Over
+                                                    || hint_on.with(|h| h.get(i).copied().unwrap_or(false));
+                                                if show {
+                                                    radicals.with_value(|r| format_code(&code, r))
+                                                } else {
+                                                    String::new()
+                                                }
+                                            }
+                                        }
+                                    </span>
+                                    </div>
                                 </div>
                             }
                         })
@@ -614,7 +714,7 @@ fn CodeSlot(
                     "border-neutral-300 bg-white"
                 };
                 format!(
-                    "flex h-10 w-10 items-center justify-center border font-serif text-xl {border}"
+                    "cj-slot flex items-center justify-center border font-serif {border}"
                 )
             }
             on:click=move |ev| {
