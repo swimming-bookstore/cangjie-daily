@@ -5,6 +5,7 @@ use cj_core::{
 use leptos::ev;
 use leptos::html;
 use leptos::prelude::*;
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::time::Duration;
 use wasm_bindgen::JsCast;
@@ -87,9 +88,16 @@ fn pin_input_to_slot(el: &web_sys::HtmlInputElement, row: usize, slot: usize) {
         return;
     };
     let rect = node.get_bounding_client_rect();
+    let (left, top) = el
+        .parent_element()
+        .map(|p| {
+            let p = p.get_bounding_client_rect();
+            (rect.x() - p.x(), rect.y() - p.y())
+        })
+        .unwrap_or((rect.x(), rect.y()));
     let style = web_sys::HtmlElement::style(el);
-    let _ = style.set_property("left", &format!("{}px", rect.x()));
-    let _ = style.set_property("top", &format!("{}px", rect.y()));
+    let _ = style.set_property("left", &format!("{left}px"));
+    let _ = style.set_property("top", &format!("{top}px"));
     let _ = style.set_property("width", &format!("{}px", rect.width()));
     let _ = style.set_property("height", &format!("{}px", rect.height()));
 }
@@ -98,6 +106,30 @@ fn restore_scroll(sx: f64, sy: f64) {
     if let Some(w) = web_sys::window() {
         let _ = w.scroll_to_with_x_and_y(sx, sy);
     }
+}
+
+fn select_linear(el: &web_sys::HtmlElement) {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let Some(doc) = window.document() else {
+        return;
+    };
+    let Ok(Some(sel)) = window.get_selection() else {
+        return;
+    };
+    let Ok(range) = doc.create_range() else {
+        return;
+    };
+    if range.select_node_contents(el.as_ref()).is_err() {
+        return;
+    }
+    let _ = sel.remove_all_ranges();
+    let _ = sel.add_range(&range);
+}
+
+thread_local! {
+    static KB_HOLD: Cell<bool> = const { Cell::new(true) };
 }
 
 fn slot_at(over: bool, finished: bool, code: &str, buffers: &[Vec<String>], i: usize, s: usize) -> String {
@@ -321,6 +353,7 @@ fn Game(table: Table) -> impl IntoView {
     let type_box = NodeRef::<html::Input>::new();
 
     let keep_kb = move || {
+        KB_HOLD.with(|c| c.set(true));
         if screen.get() != Screen::Play {
             if let Some(el) = type_box.get() {
                 let _ = el.blur();
@@ -346,6 +379,13 @@ fn Game(table: Table) -> impl IntoView {
                 move || restore_scroll(sx, sy),
                 Duration::from_millis(50),
             );
+        }
+    };
+
+    let release_kb = move || {
+        KB_HOLD.with(|c| c.set(false));
+        if let Some(el) = type_box.get() {
+            let _ = el.blur();
         }
     };
 
@@ -483,12 +523,12 @@ fn Game(table: Table) -> impl IntoView {
     on_cleanup(move || handle.remove());
 
     Effect::new(move |_| {
-        let _ = (card_n.get(), screen.get());
+        let _ = (card_n.get(), screen.get(), carets.get());
         keep_kb();
     });
 
     view! {
-        <section class="relative mx-auto max-w-2xl overflow-x-hidden" on:click=move |_| keep_kb()>
+        <section class="relative mx-auto max-w-2xl overflow-x-hidden">
             <input
                 node_ref=type_box
                 class="cj-type"
@@ -501,7 +541,7 @@ fn Game(table: Table) -> impl IntoView {
                 enterkeyhint="done"
                 aria-label="Cangjie code"
                 on:blur=move |_| {
-                    if screen.get() == Screen::Play {
+                    if screen.get() == Screen::Play && KB_HOLD.with(|c| c.get()) {
                         set_timeout(move || keep_kb(), Duration::from_millis(0));
                     }
                 }
@@ -548,8 +588,9 @@ fn Game(table: Table) -> impl IntoView {
                     focus_row(i, slot);
                     keep_kb();
                 })
+                on_release_kb=Callback::new(move |_| release_kb())
             />
-            <div class="mt-6 flex justify-center">
+            <div class="mt-6 flex justify-start">
                 <button
                     class="border border-black bg-black px-6 py-2 text-white"
                     on:pointerdown=move |ev| ev.prevent_default()
@@ -583,9 +624,10 @@ fn PlayList(
     on_check: Callback<usize>,
     on_hint: Callback<usize>,
     on_focus: Callback<(usize, Option<usize>)>,
+    on_release_kb: Callback<()>,
 ) -> impl IntoView {
     view! {
-        <div class="space-y-2">
+        <ol class="cj-list" start=move || (list_offset.get() + 1) as i32>
             {move || {
                 lesson.with(|ls| {
                     ls.iter()
@@ -594,7 +636,7 @@ fn PlayList(
                             let han = g.h.clone();
                             let code = g.c.clone();
                             view! {
-                                <div
+                                <li
                                     class=move || {
                                         match flash.with(|f| f.get(i).copied().flatten()) {
                                             Some(Flash::Bad) => "cj-row row-bad",
@@ -603,11 +645,28 @@ fn PlayList(
                                     }
                                     on:click=move |_| on_focus.run((i, None))
                                 >
-                                    <span class="w-6 shrink-0 text-center text-sm text-neutral-500 sm:w-8">
+                                    <span class="cj-num">
                                         {move || list_offset.get() + i + 1}
                                     </span>
-                                    <span class="w-10 shrink-0 text-center font-serif text-3xl sm:w-12">
-                                        {han}
+                                    <span class="cj-han-wrap">
+                                        <span
+                                            class="cj-han"
+                                            on:pointerdown=move |ev| {
+                                                ev.stop_propagation();
+                                                on_release_kb.run(());
+                                            }
+                                            on:click=move |ev| {
+                                                ev.stop_propagation();
+                                                if let Some(el) = ev
+                                                    .current_target()
+                                                    .and_then(|t| t.dyn_into::<web_sys::HtmlElement>().ok())
+                                                {
+                                                    select_linear(&el);
+                                                }
+                                            }
+                                        >
+                                            {han}
+                                        </span>
                                     </span>
                                     <div class="cj-boxes">
                                         {(0..5)
@@ -668,11 +727,11 @@ fn PlayList(
                                         if f == Some(Flash::Ok)
                                             || done.with(|d| d.get(i).copied().unwrap_or(false))
                                         {
-                                            "w-6 shrink-0 text-center text-sm text-emerald-700"
+                                            "shrink-0 text-center text-sm text-emerald-700"
                                         } else if f == Some(Flash::Bad) {
-                                            "w-6 shrink-0 text-center text-sm text-red-700"
+                                            "shrink-0 text-center text-sm text-red-700"
                                         } else {
-                                            "w-6 shrink-0 text-center text-sm"
+                                            "hidden"
                                         }
                                     }>
                                         {move || {
@@ -703,13 +762,13 @@ fn PlayList(
                                         }
                                     </span>
                                     </div>
-                                </div>
+                                </li>
                             }
                         })
                         .collect_view()
                 })
             }}
-        </div>
+        </ol>
     }
 }
 
