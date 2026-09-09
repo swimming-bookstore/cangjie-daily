@@ -76,6 +76,30 @@ fn slots_code(slots: &[String]) -> String {
     out
 }
 
+fn pin_input_to_slot(el: &web_sys::HtmlInputElement, row: usize, slot: usize) {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let Some(doc) = window.document() else {
+        return;
+    };
+    let Ok(Some(node)) = doc.query_selector(&format!("[data-cj-slot=\"{row}-{slot}\"]")) else {
+        return;
+    };
+    let rect = node.get_bounding_client_rect();
+    let style = web_sys::HtmlElement::style(el);
+    let _ = style.set_property("left", &format!("{}px", rect.x()));
+    let _ = style.set_property("top", &format!("{}px", rect.y()));
+    let _ = style.set_property("width", &format!("{}px", rect.width()));
+    let _ = style.set_property("height", &format!("{}px", rect.height()));
+}
+
+fn restore_scroll(sx: f64, sy: f64) {
+    if let Some(w) = web_sys::window() {
+        let _ = w.scroll_to_with_x_and_y(sx, sy);
+    }
+}
+
 fn slot_at(over: bool, finished: bool, code: &str, buffers: &[Vec<String>], i: usize, s: usize) -> String {
     if over || finished {
         code.chars().nth(s).map(|c| c.to_string()).unwrap_or_default()
@@ -304,6 +328,9 @@ fn Game(table: Table) -> impl IntoView {
             return;
         }
         if let Some(el) = type_box.get() {
+            let i = card_n.get();
+            let s = carets.with(|c| c.get(i).copied().unwrap_or(0)).min(4);
+            pin_input_to_slot(&el, i, s);
             let window = web_sys::window();
             let (sx, sy) = window
                 .as_ref()
@@ -314,9 +341,11 @@ fn Game(table: Table) -> impl IntoView {
             let _ = el.focus_with_options(&opts);
             el.set_value(" ");
             let _ = el.set_selection_range(1, 1);
-            if let Some(w) = window {
-                let _ = w.scroll_to_with_x_and_y(sx, sy);
-            }
+            restore_scroll(sx, sy);
+            set_timeout(
+                move || restore_scroll(sx, sy),
+                Duration::from_millis(50),
+            );
         }
     };
 
@@ -708,6 +737,7 @@ fn CodeSlot(
 ) -> impl IntoView {
     view! {
         <div
+            data-cj-slot=format!("{i}-{s}")
             class=move || {
                 let over = screen.get() == Screen::Over;
                 let finished = done.with(|d| d.get(i).copied().unwrap_or(false));
