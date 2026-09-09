@@ -87,7 +87,7 @@ fn pin_input_to_slot(el: &web_sys::HtmlInputElement, row: usize, slot: usize) {
         return;
     };
     let rect = node.get_bounding_client_rect();
-    let style = el.style();
+    let style = web_sys::HtmlElement::style(el);
     let _ = style.set_property("left", &format!("{}px", rect.x()));
     let _ = style.set_property("top", &format!("{}px", rect.y()));
     let _ = style.set_property("width", &format!("{}px", rect.width()));
